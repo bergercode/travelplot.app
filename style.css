@@ -1069,3 +1069,7 @@ input[type=number] {
         margin-right: 8px;
     }
 }
+/* Dark map theme: invert the light vector style */
+.map-dark .maplibregl-canvas {
+    filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9);
+}

@@ -8,14 +8,14 @@ const sidebar = document.querySelector('.sidebar');
 const stopsListEl = document.getElementById('stops-list');
 const totalStopsEl = document.getElementById('total-stops');
 const totalDistanceEl = document.getElementById('total-distance');
-const totalDaysEl = document.getElementById('total-days'); // New
+const totalDaysEl = document.getElementById('total-days');
 const totalTravelTimeEl = document.getElementById('total-travel-time');
 const travelTimePercentEl = document.getElementById('travel-time-percent');
 const resetBtn = document.getElementById('reset-btn');
 const reorderBtn = document.getElementById('reorder-btn'); // Floating (Desktop)
 const reorderBtnMobile = document.getElementById('reorder-btn-mobile'); // Sidebar (Mobile)
 const undoBtn = document.getElementById('undo-btn'); // Mobile
-const playBtn = document.getElementById('play-btn'); // New
+const playBtn = document.getElementById('play-btn');
 const sidebarToggle = document.getElementById('sidebar-toggle');
 
 // Initialize Map
@@ -24,21 +24,20 @@ const map = L.map('map', {
     attributionControl: false
 }).setView([20, 0], 2);
 
-// Map Tiles
-const lightMode = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    subdomains: 'abcd',
-    maxZoom: 20
-});
-
-const darkMode = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    subdomains: 'abcd',
-    maxZoom: 20
-});
+// Map Tiles: OpenFreeMap (free, no API key). Dark mode = inverted light style via CSS.
+const baseLayer = L.maplibreGL({
+    style: 'https://tiles.openfreemap.org/styles/positron',
+    attribution: '&copy; <a href="https://openfreemap.org">OpenFreeMap</a> <a href="https://www.openmaptiles.org/">&copy; OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+}).addTo(map);
 
 let isDarkMode = true;
-darkMode.addTo(map);
+const applyTheme = () => {
+    mapContainer.classList.toggle('map-dark', isDarkMode);
+    const iconClass = isDarkMode ? 'fa-moon' : 'fa-sun';
+    document.querySelectorAll('#theme-toggle-btn i, #theme-toggle-mobile i')
+        .forEach(i => i.className = `fa-solid ${iconClass}`);
+};
+applyTheme();
 
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 L.control.attribution({ position: 'bottomright' }).addTo(map);
@@ -93,16 +92,23 @@ const debounce = (func, wait) => {
     };
 };
 
+// Place search via Photon (free, no key, built for autocomplete).
+// Returns objects shaped like Nominatim results: { lat, lon, display_name }
 const searchPlaces = async (query, type = null) => {
     if (!query || query.length < 3) return [];
     try {
-        let q = query;
-        if (type === 'airport') {
-            // Append 'airport' to prioritize airport results
-            q += ' airport';
-        }
-        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5`);
-        return await response.json();
+        let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=5`;
+        if (type === 'airport') url += '&osm_tag=aeroway:aerodrome';
+        const data = await (await fetch(url)).json();
+        return data.features.map(f => {
+            const p = f.properties;
+            return {
+                lat: f.geometry.coordinates[1],
+                lon: f.geometry.coordinates[0],
+                display_name: [p.name, p.city || p.county, p.state, p.country]
+                    .filter(Boolean).join(', ')
+            };
+        });
     } catch (e) {
         console.error('Search failed', e);
         return [];
@@ -116,7 +122,6 @@ const reverseGeocode = async (lat, lng) => {
         const addr = data.address;
         if (!addr) return null;
         return addr.city || addr.town || addr.village || addr.hamlet || data.name || null;
-        return addr.city || addr.town || addr.village || addr.hamlet || data.name || null;
     } catch (e) {
         console.error('Reverse geocode failed', e);
         return null;
@@ -127,7 +132,6 @@ const reverseGeocode = async (lat, lng) => {
 const getRoute = async (start, end, method, options = {}) => {
     // OSRM profiles: driving, walking
     // For Plane: Calculate Arc Geometry
-
     // Coordinates for OSRM are lon,lat
 
     if (method === 'plane') {
@@ -166,9 +170,7 @@ const getRoute = async (start, end, method, options = {}) => {
             }
             return allArcs;
         } else if (options.flightStopLatLng) {
-            // Deprecated single stop support or fallback? 
-            // Better to migrate `flightStopLatLng` to `flightStopovers` array internally if possible, 
-            // but for now keeping back-compat or just treating it as one.
+            // Legacy single-stop support
             const arc1 = getArcPoints(start, options.flightStopLatLng);
             const arc2 = getArcPoints(options.flightStopLatLng, end);
             return [...arc1, ...arc2];
@@ -183,21 +185,18 @@ const getRoute = async (start, end, method, options = {}) => {
     // Train/Bus will default to 'driving' for road mapping if available.
 
     // Define OSRM Server Candidates
-    // We prioritize routing.openstreetmap.de as it is often more reliable than the demo server
     const candidates = [];
 
-    // Candidate 1: routing.openstreetmap.de
-    // This server separates profiles into different URL paths
+    // Candidate 1: routing.openstreetmap.de (separates profiles into different URL paths)
     if (profile === 'driving') {
         candidates.push(`https://routing.openstreetmap.de/routed-car/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`);
     } else if (profile === 'walking') {
         candidates.push(`https://routing.openstreetmap.de/routed-foot/route/v1/foot/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`);
     } else {
-        // Fallback for other profiles if added in future, trying car instance
         candidates.push(`https://routing.openstreetmap.de/routed-car/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`);
     }
 
-    // Candidate 2: project-osrm.org (Original, often overloaded)
+    // Candidate 2: project-osrm.org (original, often overloaded)
     candidates.push(`https://router.project-osrm.org/route/v1/${profile}/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`);
 
     for (const url of candidates) {
@@ -222,8 +221,6 @@ const getRoute = async (start, end, method, options = {}) => {
     }
 
     console.error('All routing providers failed. Using straight line fallback.');
-    // Fallback: Return straight line as array of points [lat, lng]
-    // Inputs start/end are Leaflet LatLng objects
     return [[start.lat, start.lng], [end.lat, end.lng]];
 };
 
@@ -319,7 +316,6 @@ window.updateStopLocationAndName = (id, lat, lng, name) => {
 // Update UI
 let uiUpdateId = 0;
 
-// Update UI
 const updateUI = () => {
     if (isReordering) return; // Don't redraw list while dragging
 
@@ -337,12 +333,7 @@ const updateUI = () => {
         for (let i = 0; i < stops.length - 1; i++) {
             const start = stops[i];
             const end = stops[i + 1];
-            // Transit method associated with the END stop (or logic: leg between i and i+1)
-            // In the data model, 'method' is stored on the 'end' stop of the leg.
-            // Wait, stop.travelMethod is defined on the stop. 
-            // Logic check: "Transit to this stop".
-            // Stop 0: Start (no method). stop 1: "travelMethod" (how I got here).
-            // Yes.
+            // The travel method is stored on the END stop of each leg ("how I got here").
             const method = end.travelMethod || 'car';
 
             if (start.latlng && end.latlng) {
@@ -363,7 +354,7 @@ const updateUI = () => {
                                 fillOpacity: 1
                             }).addTo(map);
 
-                            // Add ripple animation via CSS or just another circle
+                            // Ripple
                             const ripple = L.circleMarker(pos, {
                                 radius: 8,
                                 color: '#9b59b6',
@@ -691,29 +682,14 @@ const updateUI = () => {
     totalStopsEl.innerText = stops.length;
     totalDistanceEl.innerText = Math.ceil(totalDist / 1000) + ' km';
 
-    // Total Days Calculation: Nights + (Travel Hours / 24 rounded up)
+    // Total Days Calculation: Nights + (Travel Hours / 24)
     let travelDays = 0;
     if (totalTravelHours > 0) {
-        // If we want to be strict: 
-        // travelDays = Math.floor(totalTravelHours / 24);
-        // But maybe user wants to see fractional days or "partial days"?
-        // Simples: Total Days usually includes travel days.
-        // If I travel 2 hours, does it add a day? Usually not if I stay 0 nights.
-        // But if I stay 2 nights, it's 2 nights + travel. 
-        // Let's assuming travel time adds to duration if it's significant, 
-        // but "Nights" usually implies the duration of the trip excluding travel?
-        // Let's just append (X days travel) if significant? 
-        // Or just add to the total days number.
         travelDays = totalTravelHours / 24;
     }
 
-    // Display as integer for simplicity, rounding up if travel is significant?
-    // "Total Days" of a trip usually means "Duration".
-    // 3 nights = 4 days trip usually.
-    // Let's simple format to 1 decimal if needed, or just Math.round.
     const grandTotal = totalNights + travelDays;
-    // Formatting: if travelDays is small, it might not show up if we just round.
-    // Let's show decimal if non-integer.
+    // Show a decimal if non-integer
     if (!Number.isInteger(grandTotal)) {
         totalDaysEl.innerText = grandTotal.toFixed(1) + ' d';
     } else {
@@ -734,7 +710,7 @@ const updateUI = () => {
     saveState();
 };
 
-// Add Stop (Modified for Manual Entry support)
+// Add Stop (supports manual entry without a map click)
 const addStop = (latlng = null) => {
     if (isReordering) return;
 
@@ -873,14 +849,8 @@ window.updateStopNights = (id, newNights) => {
     const stop = stops.find(s => s.id === id);
     if (stop) {
         stop.nights = parseInt(newNights) || 0;
-        updateUI(); // Need full redraw to recalc travel days potentially if we wanted to be super accurate, but here just updating text is safer.
-        // Actually, updating nights doesn't change travel time, just the sum.
-        // We can just trigger updateUI safely.
-        // But to avoid focus loss, we might want to skip updateUI if it's just nights.
-        // But the user requested "Take into account transit times". Transit times are constant unless location changes.
-        // So updateUI is fine EXCEPT for focus loss.
-        // I'll stick to full updateUI() for correctness on the Total calculation which now involves floats.
-        // To fix focus loss, we can rely on 'onchange' which fires on blur/enter, not every keystroke.
+        // onchange fires on blur/enter (not each keystroke), so a full redraw is safe here
+        updateUI();
     }
 };
 
@@ -901,10 +871,10 @@ window.updateFlightStops = (id, val) => {
         if (count < 0) count = 0;
         stop.flightStops = count;
 
-        // Ensure array exists and is sized correctly
+        // Ensure array exists
         if (!stop.flightStopovers) stop.flightStopovers = [];
 
-        // If we have single flightStopName/LatLng from before, migrate it to array if array is empty
+        // Migrate legacy single flightStopName/LatLng into the array if empty
         if (stop.flightStopovers.length === 0 && stop.flightStopName) {
             stop.flightStopovers.push({
                 name: stop.flightStopName,
@@ -912,15 +882,7 @@ window.updateFlightStops = (id, val) => {
             });
         }
 
-        // Clip or Grow
-        // Actually we don't need to explicitly grow with empty objects immediately, 
-        // the UI loop handles rendering. But for state consistency it's nice.
-        // Let's just keep the existing data if we reduce count, so if user accidentally reduces and increases, data is there?
-        // No, typically we slice.
-        // But for "Stop 1", "Stop 2" logic, maybe we slice.
-        // Let's not delete data aggressively.
-        // But updateUI renders loop based on count.
-
+        // Existing data is kept when reducing the count; rendering is driven by `flightStops`
         updateUI();
     }
 };
@@ -933,8 +895,6 @@ window.adjustFlightStops = (id, delta) => {
         updateFlightStops(id, count);
     }
 };
-
-
 
 window.toggleFlightStops = (id) => {
     const stop = stops.find(s => s.id === id);
@@ -975,7 +935,6 @@ window.updateFlightStopover = (id, index, name) => {
         } else {
             if (stop.flightStopovers[index]) stop.flightStopovers[index].latlng = null;
             if (index === 0) stop.flightStopLatLng = null;
-            if (index === 0) stop.flightStopLatLng = null;
             updateUI();
         }
     }
@@ -1000,16 +959,12 @@ window.updateFlightStopoverLayover = (id, index, value) => {
             const el = document.getElementById(`layover-input-${stop.id}-${index}`);
             if (el) {
                 el.focus();
-                // el.select(); // Optional: select all
             }
         }, 0);
     }
 };
 
-
-
-// Reorder Logic
-// Reorder Logic Shared
+// Reorder Logic (shared by desktop and mobile buttons)
 const toggleReorderMode = () => {
     isReordering = !isReordering;
 
@@ -1317,13 +1272,13 @@ playBtn.addEventListener('click', async () => {
             const end = stops[i + 1];
             const method = end.travelMethod || 'car';
 
-            // We re-fetch route to ensure we have the points for animation
+            // Re-fetch route to ensure we have the points for animation
             const latlngs = await getRoute(start.latlng, end.latlng, method, {
                 flightStopovers: end.flightStopovers,
                 flightStopLatLng: end.flightStopLatLng
             });
 
-            // Calculate duration: 
+            // Calculate duration
             let dist = 0;
             for (let j = 0; j < latlngs.length - 1; j++) {
                 dist += L.latLng(latlngs[j]).distanceTo(L.latLng(latlngs[j + 1]));
@@ -1332,8 +1287,7 @@ playBtn.addEventListener('click', async () => {
             const speedKmph = TRAVEL_SPEEDS[method] || 60;
             const totalHours = (dist / 1000) / speedKmph;
 
-            // Base: 1 hour real time = 1000ms animation time (1 sec)
-            // This is the "1x" speed reference.
+            // Base: 1 hour real time = 1000ms animation time (the "1x" reference)
             const baseDurationMs = totalHours * 1000;
 
             segments.push({
@@ -1372,7 +1326,6 @@ playBtn.addEventListener('click', async () => {
         }).addTo(map);
 
         // Time Tracking
-        // Start Day 1, 08:00
         let currentDay = 1;
         let currentHour = 0.0;
 
@@ -1420,16 +1373,7 @@ playBtn.addEventListener('click', async () => {
                     // Speed Factor
                     const speedMult = speeds[currentSpeedIdx];
 
-                    // Advance progress
-                    // progress is 0..1
-                    // dt is ms. baseAnimDuration is ms for 1x.
-                    // At 1x speed: total time = baseAnimDuration
-                    // At 2x speed: total time = baseAnimDuration / 2
-                    // deltaProgress = dt / (currentDuration)
-                    // currentDuration = baseAnimDuration / speedMult
-                    // deltaProgress = (dt * speedMult) / baseAnimDuration
-
-                    // Use a safe minimum duration to avoid division by zero or super fast jumps
+                    // At 1x: total time = baseAnimDuration. deltaProgress = (dt * speedMult) / duration
                     const safeDuration = Math.max(segment.baseAnimDuration, 100);
                     const deltaProgress = (dt * speedMult) / safeDuration;
 
@@ -1437,15 +1381,7 @@ playBtn.addEventListener('click', async () => {
 
                     if (progress > 1) progress = 1;
 
-                    // Update Time
-                    // Real hours passed = progress * segment.realDurationHours
-                    // But we are accumulating. 
-                    const deltaRealHours = (deltaProgress * safeDuration) / 1000; // 1000ms = 1hr animation logic
-                    // Wait, if 1000ms animation = 1 hr real time
-                    // Then deltaRealHours = (dt * speedMult) / 1000.
-                    // Check: if dt=1000ms (1sec), speed=1, then deltaRealHours=1. Correct.
-                    // Check: if dt=1000ms, speed=10, then deltaRealHours=10. Correct.
-
+                    // 1000ms animation = 1 hour real time
                     currentHour += (dt * speedMult) / 1000;
 
                     if (currentHour >= 24) {
@@ -1496,11 +1432,7 @@ playBtn.addEventListener('click', async () => {
                 requestAnimationFrame(animate);
             });
 
-            // End of Segment: Process Nights
-            // End of Segment: Process Nights
-            // End of Segment: Process Nights
-
-            // Snap to exact destination
+            // End of Segment: snap to exact destination
             if (segment.destLatLng) {
                 playbackMarker.setLatLng(segment.destLatLng);
                 if (isCameraLocked && !isZooming) {
@@ -1508,6 +1440,7 @@ playBtn.addEventListener('click', async () => {
                 }
             }
 
+            // Process Nights
             if (segment.nightsAfter > 0) {
                 const stayIcons = ['fa-bed', 'fa-utensils', 'fa-martini-glass'];
 
@@ -1534,12 +1467,7 @@ playBtn.addEventListener('click', async () => {
                 }
             }
 
-            // Brief pause to show we stopped?
-            // REMOVED extra logical pause as loop covers it, but keeping a tiny beat if needed. 
-            // Actually, if nightsAfter > 0, we just did a long pause. If not, we might want a tiny pause?
-            // Original code had a 500ms pause here.
-            // If we did the loop, we don't need another pause. However if nightsAfter == 0 (e.g. stopover), maybe we do?
-            // Let's keep it safe:
+            // Tiny pause if there was no overnight stay (e.g. a stopover)
             if (!segment.nightsAfter) {
                 await new Promise(r => setTimeout(r, 200));
             }
@@ -1564,27 +1492,7 @@ playBtn.addEventListener('click', async () => {
 // Map Theme Toggle Logic
 window.toggleMapTheme = () => {
     isDarkMode = !isDarkMode;
-
-    if (isDarkMode) {
-        map.removeLayer(lightMode);
-        darkMode.addTo(map);
-    } else {
-        map.removeLayer(darkMode);
-        lightMode.addTo(map);
-    }
-
-    // Update Icons
-    const iconClass = isDarkMode ? 'fa-moon' : 'fa-sun';
-    const desktopIcon = document.querySelector('#theme-toggle-btn i');
-    const mobileIcon = document.querySelector('#theme-toggle-mobile i');
-
-    if (desktopIcon) {
-        desktopIcon.className = `fa-solid ${iconClass}`;
-    }
-    if (mobileIcon) {
-        mobileIcon.className = `fa-solid ${iconClass}`;
-    }
-
+    applyTheme();
     saveState();
 };
 
@@ -1638,16 +1546,8 @@ const serializeState = () => {
 const restoreState = (state) => {
     // Restore Theme
     if (typeof state.isDarkMode === 'boolean') {
-        if (state.isDarkMode !== isDarkMode) {
-            isDarkMode = state.isDarkMode;
-            if (isDarkMode) { map.removeLayer(lightMode); darkMode.addTo(map); }
-            else { map.removeLayer(darkMode); lightMode.addTo(map); }
-            const iconClass = isDarkMode ? 'fa-moon' : 'fa-sun';
-            const desktopIcon = document.querySelector('#theme-toggle-btn i');
-            const mobileIcon = document.querySelector('#theme-toggle-mobile i');
-            if (desktopIcon) desktopIcon.className = `fa-solid ${iconClass}`;
-            if (mobileIcon) mobileIcon.className = `fa-solid ${iconClass}`;
-        }
+        isDarkMode = state.isDarkMode;
+        applyTheme();
     }
 
     // Restore Journey Name
@@ -1816,8 +1716,6 @@ const importTrip = (text) => {
     // 2. Check for Content Style (Header)
     const header = parts[0].trim();
     if (!header.includes("Itinerary")) {
-        // Soft warning or strict? User asked for validation on content style.
-        // Let's be strict but helpful.
         console.warn("File header missing 'Itinerary' keyword.");
     }
 
@@ -1837,6 +1735,7 @@ const importTrip = (text) => {
 };
 
 loadState();
+
 // Mobile Info Panel Toggle
 const infoToggleBtn = document.getElementById('info-toggle-btn');
 const infoPanelMobile = document.getElementById('info-panel-mobile');
@@ -1856,7 +1755,7 @@ if (infoToggleBtn && infoPanelMobile) {
         }
     });
 
-    // Close when clicking the link inside (optional, but good UX if it opens new tab)
+    // Close when clicking the link inside
     const link = infoPanelMobile.querySelector('a');
     if (link) {
         link.addEventListener('click', () => {

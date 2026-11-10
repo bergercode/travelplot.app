@@ -27,6 +27,9 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 
+    <!-- MapLibre GL CSS (vector tiles via OpenFreeMap) -->
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+
     <link rel="stylesheet" href="style.css">
 </head>
 
@@ -83,9 +86,6 @@
                     </div>
                 </div>
             </div>
-
-            <!-- Controls Bar Moved OUTSIDE Sidebar for Mobile Visibility -->
-            <!-- We will remove it from here -->
 
             <div class="stops-container">
                 <ul id="stops-list" class="stops-list">
@@ -178,8 +178,6 @@
         <!-- Map Container -->
         <div id="map"></div>
 
-        <!-- Mobile Toggle -->
-
         <!-- Mobile Info Panel -->
         <div id="info-panel-mobile" class="info-panel-mobile">
             Product of <a href="https://bergercode.com" target="_blank">bergercode.com</a>
@@ -194,6 +192,9 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <!-- MapLibre GL + Leaflet bridge -->
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
     <!-- SortableJS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <script src="script.js"></script>
